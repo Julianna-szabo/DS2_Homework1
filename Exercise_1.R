@@ -43,7 +43,6 @@ gbm_params_1tree = list(max_depth = seq(2, 10))
 gbm_grid = h2o.grid("gbm", x = X, y = y,
                     grid_id = "gbm_grid_1tree",
                     training_frame = data_train,
-                    validation_frame = data_test,
                     ntrees = 1, min_rows = 1, 
                     sample_rate = 1, col_sample_rate = 1,
                     learn_rate = .01, seed = my_seed,
@@ -189,9 +188,16 @@ rmse_on_validation
 
 # D, Plot ROC curve for the best model
 
-plotROC(data_1tree)
+plotROC <- function(performance_df) {
+  ggplot(performance_df, aes(fpr, tpr, color = model)) +
+    geom_path() +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    coord_fixed() +
+    labs(x = "False Positive Rate", y = "True Positive Rate")
+}
 
+plotROC(  )
 
 # E, Show variable importance
 
-
+h2o.varimp_plot(   )

@@ -1,5 +1,5 @@
 # Clear memory
-rm(list=ls(Y))
+rm(list=ls())
 
 # Libraries
 
@@ -10,6 +10,7 @@ library(rpart.plot)
 library(xgboost)
 library(randomForest)
 library(DiagrammeR)
+library(plotROC)
 theme_set(theme_minimal())
 
 library(h2o)
@@ -52,13 +53,17 @@ data_test <- splitted_data[[3]]
 # B, Train a benchmark model of your choice (such as random forest, gbm or glm)
 # evaluate it on the validation set.
 
+y <- "no_show"
+X <- setdiff(names(h2o_data), y)
+
 glm_model <- h2o.glm(
   X, y,
   training_frame = data_train,
-  model_id = "lm"
+  model_id = "lm",
   lambda = 0,
   nfolds = 5,
-  seed = my_seed
+  seed = my_seed,
+  keep_cross_validation_predictions = TRUE
 )
 
 glm_model
@@ -110,6 +115,26 @@ deeplearning_model <- h2o.deeplearning(
 
 # D, Evaluate validation set performance of each model.
 
+getPerformanceMetrics <- function(model, newdata = NULL, xval = FALSE) {
+  h2o.performance(model, newdata = newdata, xval = xval)@metrics$thresholds_and_metric_scores %>%
+    as_tibble() %>%
+    mutate(model = model@model_id)
+}
+
+plotROC <- function(performance_df) {
+  ggplot(performance_df, aes(fpr, tpr, color = model)) +
+    geom_path() +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    coord_fixed() +
+    labs(x = "False Positive Rate", y = "True Positive Rate")
+}
+
+plotRP <- function(performance_df) {
+  ggplot(performance_df, aes(precision, tpr, color = model)) +  # tpr = recall
+    geom_line() +
+    labs(x = "Precision", y = "Recall (TPR)")
+}
+
 my_models <- list(glm_model, rf_model, gbm_model, deeplearning_model)
 all_performance <- map_df(c(my_models), getPerformanceMetrics, xval = TRUE)
 plotROC(all_performance)
@@ -125,14 +150,21 @@ ensemble_model_glm <- h2o.stackedEnsemble(
   X, y,
   training_frame = data_train,
   metalearner_algorithm = "glm",
+  model_id = "stacked_model",
   base_models = my_models
 )
 
 # G, Evaluate ensembles on validation set. Did it improve prediction?
 
-h2o.auc(h2o.performance(ensemble_model_glm, newdata = data_valid))
+map_df(
+  c(my_models, ensemble_model_glm),
+  ~{tibble(model = .@model_id, auc = h2o.auc(h2o.performance(., newdata = data_valid)))}
+)
 
 # H, Evaluate the best performing model on the test set
 # How does performance compare to that of the validation set?
 
-
+map_df(
+  c(ensemble_model_glm),
+  ~{tibble(model = .@model_id, auc = h2o.auc(h2o.performance(., newdata = data_test)))}
+)
