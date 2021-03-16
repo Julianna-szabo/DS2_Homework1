@@ -1,5 +1,6 @@
 # Clear memory
-rm(list=ls(Y))
+rm(list=ls(
+  all.names = TRUE))
 
 # Libraries
 
@@ -10,7 +11,6 @@ library(rpart.plot)
 library(xgboost)
 library(randomForest)
 library(data.tree)
-library(plotROC)
 theme_set(theme_minimal())
 
 library(h2o)
@@ -43,6 +43,7 @@ gbm_params_1tree = list(max_depth = seq(2, 10))
 gbm_grid = h2o.grid("gbm", x = X, y = y,
                     grid_id = "gbm_grid_1tree",
                     training_frame = data_train,
+                    validation_frame = data_test,
                     ntrees = 1, min_rows = 1, 
                     sample_rate = 1, col_sample_rate = 1,
                     learn_rate = .01, seed = my_seed,
@@ -180,11 +181,15 @@ h2o.rmse(h2o.performance(best_xgboost))
 my_models <- list(
   data_1tree, best_rf, best_gbm, best_xgboost
 )
-rmse_on_validation <- map_df(my_models, ~{
-  tibble(model = .@model_id, RMSE = h2o.rmse(h2o.performance(., data_test)))
-}) %>% arrange(RMSE)
 
-rmse_on_validation
+rmse_validation <- map_df(my_models, ~{
+  tibble(model = .@model_id, RMSE_train = h2o.rmse(h2o.performance(., data_train)),
+         RMSE_test = h2o.rmse(h2o.performance(., data_test)),
+         AUC_train = h2o.auc(h2o.performance(., data_train)),
+         AUC_test = h2o.auc(h2o.performance(., data_test)))}) %>% 
+  arrange(RMSE_train)
+
+rmse_validation
 
 # D, Plot ROC curve for the best model
 
