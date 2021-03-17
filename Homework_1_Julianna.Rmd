@@ -404,12 +404,12 @@ gbm_model <- h2o.gbm(
   keep_cross_validation_predictions = TRUE
 )
 
-## Deep learning
+## Deeplearning
 
-deeplearning_model <- h2o.deeplearning(
+deeplearning_model <- h2o.xgboost_model(
   X, y,
   training_frame = data_train,
-  model_id = 'deeplearning_model',
+  model_id = 'deeplearning',
   hidden = c(32, 8),
   seed = my_seed,
   nfolds = 5,
@@ -446,7 +446,7 @@ plotROC(all_performance)
 plotRP(all_performance)
 ```
 
-Looks like the deeplearning mode is performing worse than the others. Random Forest seems to be the best looking at the ROC curve. Looks 
+Looks like the deeplearning mode is performing worse than the others. Random Forest seems to be the best looking at the ROC curve. Looks like the Precision is similar to all the models, but there is a large difference in Recall. In Recall overall Random Forest seems to be the highest while the others only have one spike and then drop.
 
 ## E, How large are the correlations of predicted scores of the validation set produced by the base learners?
 
@@ -460,7 +460,23 @@ ensemble_model_glm <- h2o.stackedEnsemble(
   X, y,
   training_frame = data_train,
   metalearner_algorithm = 'glm',
-  model_id = 'stacked_model',
+  model_id = 'stacked_model_glm',
+  base_models = my_models
+)
+
+ensemble_model_rf <- h2o.stackedEnsemble(
+  X, y,
+  training_frame = data_train,
+  metalearner_algorithm = 'drf',
+  model_id = 'stacked_model_rf',
+  base_models = my_models
+)
+
+ensemble_model_gbm <- h2o.stackedEnsemble(
+  X, y,
+  training_frame = data_train,
+  metalearner_algorithm = 'gbm',
+  model_id = 'stacked_model_gbm',
   base_models = my_models
 )
 ```
@@ -468,11 +484,14 @@ ensemble_model_glm <- h2o.stackedEnsemble(
 ## G, Evaluate ensembles on validation set. Did it improve prediction?
 
 ```{r}
+ensemble_models <- list(ensemble_model_glm, ensemble_model_rf, ensemble_model_gbm)
 map_df(
-  c(my_models, ensemble_model_glm),
+  c(my_models, ensemble_models),
   ~{tibble(model = .@model_id, auc = h2o.auc(h2o.performance(., newdata = data_valid)))}
 )
 ```
+
+Looks like the stacked model using glm as a base is the best model since it has the highest AUC, with the deeplearning model close behind. 
 
 ## H, Evaluate the best performing model on the test set. How does performance compare to that of the validation set?
 

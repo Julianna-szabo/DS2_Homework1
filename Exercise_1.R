@@ -15,7 +15,7 @@ theme_set(theme_minimal())
 
 library(h2o)
 h2o.init()
-h2o.no_progress()
+#h2o.no_progress()
 #h2o.shutdown()
 
 my_seed <- (5678)
@@ -114,11 +114,12 @@ rf_grid <- h2o.grid(
   hyper_params = rf_params
 )
 
-h2o.getGrid(rf_grid@grid_id, "mae")
+h2o.getGrid(rf_grid@grid_id, "auc", decreasing = TRUE)
 best_rf <- h2o.getModel(
-  h2o.getGrid(rf_grid@grid_id, "mae")@model_ids[[1]]
+  h2o.getGrid(rf_grid@grid_id, "auc", decreasing = TRUE)@model_ids[[1]]
 )
-h2o.mae(h2o.performance(best_rf, data_train))
+best_rf
+h2o.auc(h2o.performance(best_rf))
 
 ## GBM
 
@@ -138,13 +139,13 @@ gbm_grid <- h2o.grid(
   hyper_params = gbm_params
 )
 
-(h2o.getGrid(grid_id = gbm_grid@grid_id, sort_by = "rmse", decreasing = TRUE))
+(h2o.getGrid(grid_id = gbm_grid@grid_id, sort_by = "auc", decreasing = TRUE))
 best_gbm <- h2o.getModel(
-  h2o.getGrid(grid_id = gbm_grid@grid_id, sort_by = "rmse", decreasing = TRUE)@model_ids[[1]]
+  h2o.getGrid(grid_id = gbm_grid@grid_id, sort_by = "auc", decreasing = TRUE)@model_ids[[1]]
 )
 
 best_gbm
-h2o.rmse(h2o.performance(best_gbm))
+h2o.auc(h2o.performance(best_gbm))
 
 ## XG Boost
 
@@ -157,7 +158,8 @@ xgboost_params <- list(
 )
 
 xgboost_grid <- h2o.grid(
-  "xgboost", x = X, y = y,
+  "xgboost", 
+  x = X, y = y,
   grid_id = "xgboost",
   training_frame = data_train,
   nfolds = 5,
@@ -165,14 +167,13 @@ xgboost_grid <- h2o.grid(
   hyper_params = xgboost_params
 )
 
-
-h2o.getGrid(grid_id = xgboost_grid@grid_id, sort_by = "rmse", decreasing = TRUE)
+h2o.getGrid(grid_id = xgboost_grid@grid_id, sort_by = "auc", decreasing = TRUE)
 best_xgboost <- h2o.getModel(
-  h2o.getGrid(grid_id = xgboost_grid@grid_id, sort_by = "rmse", decreasing = TRUE)@model_ids[[1]]
+  h2o.getGrid(grid_id = xgboost_grid@grid_id, sort_by = "auc", decreasing = TRUE)@model_ids[[1]]
 )
 
 best_xgboost
-h2o.rmse(h2o.performance(best_xgboost))
+h2o.auc(h2o.performance(best_xgboost))
 
 # C, Model comparison
 
