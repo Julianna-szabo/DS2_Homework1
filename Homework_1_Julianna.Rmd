@@ -35,9 +35,6 @@ We have to import the data
 ```{r cars}
 data <- as_tibble(ISLR::OJ)
 h2o_data <- as.h2o(data)
-
-y <- "Purchase"
-X <- setdiff(names(h2o_data), y)
 ```
 
 ## A, Train and test data and build a decision tree for reference
@@ -50,6 +47,9 @@ data_test <- splitted_data[[2]]
 ```
 
 ```{r}
+y <- "Purchase"
+X <- setdiff(names(h2o_data), y)
+
 ## Simple decision tree
 gbm_params_1tree = list(max_depth = seq(2, 10))
 
@@ -319,16 +319,16 @@ We load the new data.
 
 ```{r}
 # Load the data
-data <- read_csv("https://raw.githubusercontent.com/Julianna-szabo/DS2_Homework1/main/KaggleV2-May-2016.csv")
+data <- read_csv('https://raw.githubusercontent.com/Julianna-szabo/DS2_Homework1/main/KaggleV2-May-2016.csv')
 
 # some data cleaning
-data <- select(data, -one_of(c("PatientId", "AppointmentID", "Neighbourhood"))) %>%
+data <- select(data, -one_of(c('PatientId', 'AppointmentID', 'Neighbourhood'))) %>%
   janitor::clean_names()
 
 # for binary prediction, the target variable must be a factor + generate new variables
 data <- mutate(
   data,
-  no_show = factor(no_show, levels = c("Yes", "No")),
+  no_show = factor(no_show, levels = c('Yes', 'No')),
   handcap = ifelse(handcap > 0, 1, 0),
   across(c(gender, scholarship, hipertension, alcoholism, handcap), factor),
   hours_since_scheduled = as.numeric(appointment_day - scheduled_day)
@@ -336,12 +336,9 @@ data <- mutate(
 
 # clean up a little bit
 data <- filter(data, between(age, 0, 95), hours_since_scheduled >= 0) %>%
-  select(-one_of(c("scheduled_day", "appointment_day", "sms_received")))
+  select(-one_of(c('scheduled_day', 'appointment_day', 'sms_received')))
 
 h2o_data <- as.h2o(data)
-
-y <- "no_show"
-X <- setdiff(names(h2o_data), y)
 ```
 
 ## A, Create train / validation / test sets, cutting the data into 5% - 45% - 50% parts
@@ -356,6 +353,9 @@ data_test <- splitted_data[[3]]
 ## B, Train a benchmark model of your choice (such as random forest, gbm or glm) evaluate it on the validation set.
 
 ```{r}
+y <- 'no_show'
+X <- setdiff(names(h2o_data), y)
+
 glm_model <- h2o.glm(
   X, y,
   training_frame = data_train,
@@ -371,6 +371,8 @@ glm_model
 h2o.rmse(h2o.performance(glm_model))
 h2o.rmse(h2o.performance(glm_model, data_valid))
 ```
+Looks like this is a good model. The RMSE is 0.44 in the training set which is relatively good, especially because it doesn't change much to the validation set. IT generated more False Positives than False Negatives. This is good because it means that we do not double book appointments. However, we only predict 18% of the ones that do not show up correctly. This is rather poor. Hopefully, it can be improved. 
+
 
 ## C, Build at least 3 models of different families using cross validation, keeping cross validated predictions. You might also try deeplearning.
 
@@ -380,7 +382,7 @@ h2o.rmse(h2o.performance(glm_model, data_valid))
 rf_model <- h2o.randomForest(
   X, y,
   training_frame = data_train,
-  model_id = "rf",
+  model_id = 'rf_model',
   ntrees = 200,
   max_depth = 10,
   seed = my_seed,
@@ -393,7 +395,7 @@ rf_model <- h2o.randomForest(
 gbm_model <- h2o.gbm(
   X, y,
   training_frame = data_train,
-  model_id = "gbm",
+  model_id = 'gbm_model',
   ntrees = 200,
   max_depth = 5,
   learn_rate = 0.1,
@@ -407,7 +409,7 @@ gbm_model <- h2o.gbm(
 deeplearning_model <- h2o.deeplearning(
   X, y,
   training_frame = data_train,
-  model_id = "deeplearning",
+  model_id = 'deeplearning_model',
   hidden = c(32, 8),
   seed = my_seed,
   nfolds = 5,
@@ -427,15 +429,15 @@ getPerformanceMetrics <- function(model, newdata = NULL, xval = FALSE) {
 plotROC <- function(performance_df) {
   ggplot(performance_df, aes(fpr, tpr, color = model)) +
     geom_path() +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    geom_abline(slope = 1, intercept = 0, linetype = 'dashed') +
     coord_fixed() +
-    labs(x = "False Positive Rate", y = "True Positive Rate")
+    labs(x = 'False Positive Rate', y = 'True Positive Rate')
 }
 
 plotRP <- function(performance_df) {
   ggplot(performance_df, aes(precision, tpr, color = model)) +  # tpr = recall
     geom_line() +
-    labs(x = "Precision", y = "Recall (TPR)")
+    labs(x = 'Precision', y = 'Recall (TPR)')
 }
 
 my_models <- list(glm_model, rf_model, gbm_model, deeplearning_model)
@@ -443,6 +445,8 @@ all_performance <- map_df(c(my_models), getPerformanceMetrics, xval = TRUE)
 plotROC(all_performance)
 plotRP(all_performance)
 ```
+
+Looks like the deeplearning mode is performing worse than the others. Random Forest seems to be the best looking at the ROC curve. Looks 
 
 ## E, How large are the correlations of predicted scores of the validation set produced by the base learners?
 
@@ -455,8 +459,8 @@ plotRP(all_performance)
 ensemble_model_glm <- h2o.stackedEnsemble(
   X, y,
   training_frame = data_train,
-  metalearner_algorithm = "glm",
-  model_id = "stacked_model",
+  metalearner_algorithm = 'glm',
+  model_id = 'stacked_model',
   base_models = my_models
 )
 ```
