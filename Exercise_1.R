@@ -181,16 +181,22 @@ my_models <- list(
   data_1tree, best_rf, best_gbm, best_xgboost
 )
 
-rmse_validation <- map_df(my_models, ~{
-  tibble(model = .@model_id, RMSE_train = h2o.rmse(h2o.performance(., data_train)),
-         RMSE_test = h2o.rmse(h2o.performance(., data_test)),
+auc_validation <- map_df(my_models, ~{
+  tibble(model = .@model_id,
          AUC_train = h2o.auc(h2o.performance(., data_train)),
          AUC_test = h2o.auc(h2o.performance(., data_test)))}) %>% 
-  arrange(RMSE_train)
+  arrange(AUC_train)
 
-rmse_validation
+auc_validation
+
 
 # D, Plot ROC curve for the best model
+
+getPerformanceMetrics <- function(model, newdata = NULL, xval = FALSE) {
+  h2o.performance(model, newdata = newdata, xval = xval)@metrics$thresholds_and_metric_scores %>%
+    as_tibble() %>%
+    mutate(model = model@model_id)
+}
 
 plotROC <- function(performance_df) {
   ggplot(performance_df, aes(fpr, tpr, color = model)) +
@@ -200,8 +206,10 @@ plotROC <- function(performance_df) {
     labs(x = "False Positive Rate", y = "True Positive Rate")
 }
 
-plotROC(  )
+best_rf_performance <- map_df(c(best_rf), getPerformanceMetrics, xval = TRUE)
+
+plotROC(best_rf_performance)
 
 # E, Show variable importance
 
-h2o.varimp_plot(   )
+h2o.varimp_plot(best_rf)
