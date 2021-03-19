@@ -1,0 +1,553 @@
+---
+title: "Homework 1 - Julianna"
+author: "Julianna Szabo"
+date: "3/16/2021"
+output: html_document
+---
+
+```{r, include=FALSE}
+# Clear memory
+rm(list=ls())
+
+# Libraries
+
+library(tidyverse)
+library(ggplot2)
+library(rpart)
+library(rpart.plot)
+library(xgboost)
+library(randomForest)
+library(data.tree)
+library(caret)
+theme_set(theme_minimal())
+
+library(h2o)
+h2o.init(max_mem_size = "7G")
+# h2o.no_progress()
+# h2o.shutdown()
+
+my_seed <- (5678)
+```
+
+# Exercise 1
+
+We have to import the data
+```{r, cache=TRUE}
+data <- as_tibble(ISLR::OJ)
+h2o_data <- as.h2o(data)
+```
+
+## A, Train and test data and build a decision tree for reference
+
+```{r, cache=TRUE}
+## Train and test data
+splitted_data <- h2o.splitFrame(h2o_data, ratios = 0.75, seed = my_seed)
+data_train <- splitted_data[[1]]
+data_test <- splitted_data[[2]]
+```
+
+```{r}
+y <- "Purchase"
+X <- setdiff(names(h2o_data), y)
+
+## Simple decision tree
+gbm_params_1tree = list(max_depth = seq(2, 10))
+
+### Train and validate a cartesian grid of GBMs
+gbm_grid = h2o.grid("gbm", x = X, y = y,
+                    grid_id = "gbm_grid_1tree",
+                    training_frame = data_train,
+                    ntrees = 1, min_rows = 1, 
+                    sample_rate = 1, col_sample_rate = 1,
+                    learn_rate = .01, seed = my_seed,
+                    hyper_params = gbm_params_1tree)
+
+gbm_gridperf = h2o.getGrid(grid_id = "gbm_grid_1tree",
+                           sort_by = "auc",
+                           decreasing = TRUE)
+
+ggplot(as.data.frame(sapply(gbm_gridperf@summary_table, as.numeric))) +
+  geom_point(aes(max_depth, auc)) +
+  geom_line(aes(max_depth, auc, group=1)) +
+  labs(x="max depth", y="AUC", title="Grid Search for Single Tree Models")
+
+data_1tree = 
+  h2o.gbm(x = X, y = y, 
+          training_frame = data_train,
+          model_id = "data_1tree",
+          ntrees = 1, min_rows = 1, 
+          sample_rate = 1, col_sample_rate = 1,
+          max_depth = 4,
+          stopping_rounds = 3, stopping_tolerance = 0.01, 
+          stopping_metric = "AUC", 
+          seed = 1)
+
+dataH2oTree = h2o.getModelTree(model = data_1tree, tree_number = 1)
+
+source("Plotting_h2o_tree.R")
+
+DataTree = createDataTree(dataH2oTree)
+
+GetEdgeLabel <- function(node) {return (node$edgeLabel)}
+GetNodeShape <- function(node) {switch(node$type, 
+                                       split = "diamond", leaf = "oval")}
+GetFontName <- function(node) {switch(node$type, 
+                                      split = 'Palatino-bold', 
+                                      leaf = 'Palatino')}
+SetEdgeStyle(DataTree, fontname = 'Palatino-italic', 
+             label = GetEdgeLabel, labelfloat = TRUE,
+             fontsize = "26", fontcolor='royalblue4')
+SetNodeStyle(DataTree, fontname = GetFontName, shape = GetNodeShape, 
+             fontsize = "26", fontcolor='royalblue4',
+             height="0.75", width="1")
+
+SetGraphStyle(DataTree, rankdir = "LR", dpi=70.)
+
+plot(DataTree, output = "graph")
+
+```
+
+The AUC curve shows that the ideal may depth for my model would be 4 so I decided to go with that. Therefore in the end I ended up with 16 predictions.
+
+Looking at the model it can be seen that Loyal CH is the most comonly used factor when splitting. This makes sense since this would dramatically increase which brand one buys. The other two variables that are used more than once are PriceDiff and SalePriceMM, which are both related to pricing. Meaning in some cases brand loyalty could be affected by pricing.
+
+## B, Tree ensemble models
+
+```{r, cache=TRUE}
+## Random forest
+
+rf_params <- list(
+  ntrees = c(10, 50, 100, 300),
+  mtries = c(2, 4, 6, 8),
+  sample_rate = c(0.2, 0.632, 1),
+  max_depth = c(10, 20)
+)
+
+rf_grid <- h2o.grid(
+  "randomForest", 
+  x = X, y = y,
+  training_frame = data_train, 
+  grid_id = "rf",
+  nfolds = 5,
+  seed = my_seed,
+  hyper_params = rf_params
+)
+
+h2o.getGrid(rf_grid@grid_id, "auc", decreasing = TRUE)
+best_rf <- h2o.getModel(
+  h2o.getGrid(rf_grid@grid_id, "auc", decreasing = TRUE)@model_ids[[1]]
+)
+best_rf
+h2o.auc(h2o.performance(best_rf))
+
+## GBM
+
+gbm_params <- list(
+  learn_rate = c(0.01, 0.05, 0.1, 0.3),
+  ntrees = c(10, 50, 100, 300),
+  max_depth = c(2, 5),
+  sample_rate = c(0.2, 0.5, 0.8, 1)
+)
+
+gbm_grid <- h2o.grid(
+  "gbm", x = X, y = y,
+  grid_id = "gbm",
+  training_frame = data_train,
+  nfolds = 5,
+  seed = my_seed,
+  hyper_params = gbm_params
+)
+
+(h2o.getGrid(grid_id = gbm_grid@grid_id, sort_by = "auc", decreasing = TRUE))
+best_gbm <- h2o.getModel(
+  h2o.getGrid(grid_id = gbm_grid@grid_id, sort_by = "auc", decreasing = TRUE)@model_ids[[1]]
+)
+
+best_gbm
+h2o.auc(h2o.performance(best_gbm))
+
+## XG Boost
+
+xgboost_params <- list(
+  learn_rate = c(0.1, 0.3), 
+  ntrees = c(50, 100),
+  max_depth = c(2, 5),
+  gamma = c(0, 1, 2),
+  sample_rate = c(0.5, 1)
+)
+
+xgboost_grid <- h2o.grid(
+  "xgboost", 
+  x = X, y = y,
+  grid_id = "xgboost",
+  training_frame = data_train,
+  nfolds = 5,
+  seed = my_seed,
+  hyper_params = xgboost_params
+)
+
+h2o.getGrid(grid_id = xgboost_grid@grid_id, sort_by = "auc", decreasing = TRUE)
+best_xgboost <- h2o.getModel(
+  h2o.getGrid(grid_id = xgboost_grid@grid_id, sort_by = "auc", decreasing = TRUE)@model_ids[[1]]
+)
+
+best_xgboost
+h2o.auc(h2o.performance(best_xgboost))
+```
+
+In this step, I've picked the best models from the grids built for the different models. I've decided to use AUC as the metric for evaluation, since it is the best one number summary of a classification summary. THe higher the AUC is the better the classification.
+
+## C, Model comparison
+
+```{r}
+my_models <- list(
+  data_1tree, best_rf, best_gbm, best_xgboost
+)
+
+auc_validation <- map_df(my_models, ~{
+  tibble(model = .@model_id,
+         AUC_train = h2o.auc(h2o.performance(., data_train)),
+         AUC_test = h2o.auc(h2o.performance(., data_test)))}) %>% 
+  arrange(AUC_train)
+
+auc_validation
+```
+
+It looks like the best model is the Random forest. It was better than all the others by 0.04 and performed just as well as the xgboost in the test set. This also shows that the Random Forest model was not overfit since it also worked very well for the test set.
+
+## D, Plot ROC curve for the best model
+
+```{r}
+getPerformanceMetrics <- function(model, newdata = NULL, xval = FALSE) {
+  h2o.performance(model, newdata = newdata, xval = xval)@metrics$thresholds_and_metric_scores %>%
+    as_tibble() %>%
+    mutate(model = model@model_id)
+}
+
+plotROC <- function(performance_df) {
+  ggplot(performance_df, aes(fpr, tpr, color = model)) +
+    geom_path() +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+    coord_fixed() +
+    labs(x = "False Positive Rate", y = "True Positive Rate")
+}
+
+best_rf_performance <- map_df(c(best_rf), getPerformanceMetrics, xval = TRUE)
+
+plotROC(best_rf_performance)
+```
+
+The ROC curve looks very good. You can see that the line stays very close to zero on the FPR line while the TPR increases, which is good. Further, the line passes relatively close by 1 on the TPR axis, which is the goal we are trying to reach.
+
+## E, Show variable importance
+
+```{r}
+h2o.varimp_plot(best_rf)
+```
+
+Looks like Loay to CH is by far the most important factor in the random forest. Others like StoreID and PriceDiff are much less important, although still more important than some others. This finding makes sense, since customers loayl to CH will be more likely to buy that brand despite some other factors. Interestingly, two of the three important variables were also the othes seen in the simple tree at the very beginning of this exercise.
+
+```{r}
+h2o.shutdown()
+```
+
+
+# Exercise 2
+
+First, we are loading the data.
+
+```{r data loading 2}
+h2o.init()
+
+data <- as_tibble(ISLR::Hitters) %>%
+  drop_na(Salary) %>%
+  mutate(log_salary = log(Salary), Salary = NULL)
+h2o_data <- as.h2o(data)
+
+y <- "log_salary"
+X <- setdiff(names(h2o_data), y)
+```
+
+## A, Train 2 Random Forest models
+
+```{r}
+## 1, Random forest with 2 variables
+
+rf_2_var <- h2o.randomForest(
+  X, y,
+  training_frame = h2o_data,
+  model_id = "rf_2_var",
+  mtries = 2,
+  seed = my_seed
+)
+
+## 2, Random forest with 10 variables
+
+rf_10_var <- h2o.randomForest(
+  X, y,
+  training_frame = h2o_data,
+  model_id = "rf_2_var",
+  mtries = 10,
+  seed = my_seed
+)
+```
+
+### Comparison of variable importance
+
+```{r}
+h2o.varimp_plot(rf_2_var)
+h2o.varimp_plot(rf_10_var)
+```
+
+Looks like the first 2 are the same for the two models. With just two variables all variables (except CAtBat) are more important. CRuns and CRBI also show up high on the list on both models. Variables like Years and Hits show up in the first model but not the second.
+
+## B, Explanation of extreme difference in variable importance
+
+In the one with 10 variables CAtBat is shown to be extremely more important than the others with a jump from almost 1 from 0.6. This could be explained that when 10 variables are picked randomly (this is what mtries = 10 means) then CAtBat will be included in more of the trees (default number of trees is 50). Therefore, its importance crystallizes out easier.
+
+## C, Two GMB models 
+
+```{r}
+## GBM sample_rate = 0.1
+
+gbm_srate_01 <- h2o.gbm(
+  x = X, y = y,
+  model_id = "gbm_srate_01",
+  training_frame = h2o_data,
+  sample_rate = 0.1,
+  seed = my_seed
+)
+
+## GBM sample_rate = 1
+
+gbm_srate_1 <- h2o.gbm(
+  x = X, y = y,
+  model_id = "gbm_srate_1",
+  training_frame = h2o_data,
+  sample_rate = 1,
+  seed = my_seed
+)
+```
+
+### Comparison of variable importance
+
+```{r}
+h2o.varimp_plot(gbm_srate_01)
+h2o.varimp_plot(gbm_srate_1)
+```
+
+The one where the sample_rate is 1 has the more extreme values. This is because bootstrapping always completely resampled the data and therefore build every unrelated trees. With a sample_rate equal to 0.1 the generated datasets are closed to each other since only 10% of the data gets replaced. This means the data will be more unform and increase variables importance.
+
+```{r}
+h2o.shutdown()
+```
+
+
+# Exercise 3
+
+We load the new data.
+
+```{r}
+h2o.init()
+
+# Load the data
+data <- read_csv('https://raw.githubusercontent.com/Julianna-szabo/DS2_Homework1/main/KaggleV2-May-2016.csv')
+
+# some data cleaning
+data <- select(data, -one_of(c('PatientId', 'AppointmentID', 'Neighbourhood'))) %>%
+  janitor::clean_names()
+
+# for binary prediction, the target variable must be a factor + generate new variables
+data <- mutate(
+  data,
+  no_show = factor(no_show, levels = c('Yes', 'No')),
+  handcap = ifelse(handcap > 0, 1, 0),
+  across(c(gender, scholarship, hipertension, alcoholism, handcap), factor),
+  hours_since_scheduled = as.numeric(appointment_day - scheduled_day)
+)
+
+# clean up a little bit
+data <- filter(data, between(age, 0, 95), hours_since_scheduled >= 0) %>%
+  select(-one_of(c('scheduled_day', 'appointment_day', 'sms_received')))
+
+h2o_data <- as.h2o(data)
+```
+
+## A, Create train / validation / test sets, cutting the data into 5% - 45% - 50% parts
+
+```{r}
+splitted_data <- h2o.splitFrame(h2o_data, ratios = c(0.05, 0.45), seed = my_seed)
+data_train <- splitted_data[[1]]
+data_valid <- splitted_data[[2]]
+data_test <- splitted_data[[3]]
+```
+
+## B, Train a benchmark model of your choice (such as random forest, gbm or glm) evaluate it on the validation set.
+
+```{r}
+y <- 'no_show'
+X <- setdiff(names(h2o_data), y)
+
+glm_model <- h2o.glm(
+  X, y,
+  training_frame = data_train,
+  model_id = "lm",
+  lambda = 0,
+  nfolds = 5,
+  seed = my_seed,
+  keep_cross_validation_predictions = TRUE
+)
+
+glm_model
+
+h2o.rmse(h2o.performance(glm_model))
+h2o.rmse(h2o.performance(glm_model, data_valid))
+```
+
+Looks like this is a good model. The RMSE is 0.44 in the training set which is relatively good, especially because it doesn't change much to the validation set. IT generated more False Positives than False Negatives. This is good because it means that we do not double book appointments. However, we only predict 18% of the ones that do not show up correctly. This is rather poor. Hopefully, it can be improved. 
+
+
+## C, Build at least 3 models of different families using cross validation, keeping cross validated predictions. You might also try deeplearning.
+
+```{r}
+## Random forest
+
+rf_model <- h2o.randomForest(
+  X, y,
+  training_frame = data_train,
+  model_id = 'rf_model',
+  ntrees = 200,
+  max_depth = 10,
+  seed = my_seed,
+  nfolds = 5,
+  keep_cross_validation_predictions = TRUE
+)
+
+## GBM
+
+gbm_model <- h2o.gbm(
+  X, y,
+  training_frame = data_train,
+  model_id = 'gbm_model',
+  ntrees = 200,
+  max_depth = 5,
+  learn_rate = 0.1,
+  seed = my_seed,
+  nfolds = 5,
+  keep_cross_validation_predictions = TRUE
+)
+
+## Deeplearning
+
+deeplearning_model <- h2o.deeplearning(
+  X, y,
+  training_frame = data_train,
+  model_id = 'deeplearning',
+  hidden = c(32, 8),
+  seed = my_seed,
+  nfolds = 5,
+  keep_cross_validation_predictions = TRUE
+)
+```
+
+## D, Evaluate validation set performance of each model
+
+```{r}
+getPerformanceMetrics <- function(model, newdata = NULL, xval = FALSE) {
+  h2o.performance(model, newdata = newdata, xval = xval)@metrics$thresholds_and_metric_scores %>%
+    as_tibble() %>%
+    mutate(model = model@model_id)
+}
+
+plotROC <- function(performance_df) {
+  ggplot(performance_df, aes(fpr, tpr, color = model)) +
+    geom_path() +
+    geom_abline(slope = 1, intercept = 0, linetype = 'dashed') +
+    coord_fixed() +
+    labs(x = 'False Positive Rate', y = 'True Positive Rate')
+}
+
+plotRP <- function(performance_df) {
+  ggplot(performance_df, aes(precision, tpr, color = model)) +  # tpr = recall
+    geom_line() +
+    labs(x = 'Precision', y = 'Recall (TPR)')
+}
+
+my_models <- list(glm_model, rf_model, gbm_model, deeplearning_model)
+all_performance <- map_df(c(my_models), getPerformanceMetrics, newdata = data_valid, xval = TRUE)
+plotROC(all_performance)
+plotRP(all_performance)
+```
+
+Looks like the deeplearning mode is performing worse than the others. Random Forest seems to be the best looking at the ROC curve. Looks like the Precision is similar to all the models, but there is a large difference in Recall. In Recall overall Random Forest seems to be the highest while the others only have one spike and then drop.
+
+## E, How large are the correlations of predicted scores of the validation set produced by the base learners?
+
+```{r}
+h2o.model_correlation_heatmap(my_models, data_valid)
+h2o.varimp_heatmap(my_models)
+```
+It looks like the highest correlation is between the deep learning and the linear model. This is very interesting find since it can be seen that they both have a high correlation with the Rnadom Forest model as well. Since this can cause an issue when stacking, Deeplearning will not be considered for that.
+With the features the highest is the handcap in the GBM model, followed by handcap and alcoholism in the Random Forest. Those two features then to be the ones with the highest correlation for each of the models, meaning they are likely influencial for the classification.
+
+
+
+## F, Create a stacked ensemble model from the base learners
+
+```{r}
+models_for_stacking <- list(glm_model, rf_model, gbm_model)
+
+ensemble_model_glm <- h2o.stackedEnsemble(
+  X, y,
+  training_frame = data_train,
+  metalearner_algorithm = 'glm',
+  model_id = 'stacked_model_glm',
+  base_models = models_for_stacking,
+  seed = my_seed
+)
+
+ensemble_model_rf <- h2o.stackedEnsemble(
+  X, y,
+  training_frame = data_train,
+  metalearner_algorithm = 'drf',
+  model_id = 'stacked_model_rf',
+  base_models = models_for_stacking,
+  seed = my_seed
+)
+
+ensemble_model_gbm <- h2o.stackedEnsemble(
+  X, y,
+  training_frame = data_train,
+  metalearner_algorithm = 'gbm',
+  model_id = 'stacked_model_gbm',
+  base_models = models_for_stacking,
+  seed = my_seed
+)
+```
+
+I wanted to see if stacking would improve the model from the base regardless of the original performance, so I build three different stacked models based on the original three very close models.
+
+## G, Evaluate ensembles on validation set. Did it improve prediction?
+
+```{r}
+ensemble_models <- list(ensemble_model_glm, ensemble_model_rf, ensemble_model_gbm)
+map_df(
+  c(my_models, ensemble_models),
+  ~{tibble(model = .@model_id, auc = h2o.auc(h2o.performance(., newdata = data_valid)))}
+)
+```
+
+Looks like the stacked model using glm as a base is the best model since it has the highest AUC.
+Overall stacking improved improved the GLM and GBM models, but actually worsened the Random Forest model.
+
+## H, Evaluate the best performing model on the test set. How does performance compare to that of the validation set?
+
+```{r}
+map_df(
+  c(ensemble_model_glm),
+  ~{tibble(model = .@model_id, auc = h2o.auc(h2o.performance(., newdata = data_test)))}
+)
+```
+
+The performance of the model on the test set is exactly the same as before. This is a really good sign, since that means that it should be good for generalization on this dataset.
+
